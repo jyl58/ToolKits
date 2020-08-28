@@ -1,0 +1,8 @@
+package wakeupStatus;
+
+struct wakeup_status
+{
+	int64_t  timestamp;
+	int8_t   status;
+	string	deviceId;
+}

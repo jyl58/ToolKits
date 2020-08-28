@@ -1,0 +1,8 @@
+package wakeupThreshold;
+
+struct wakeup_threshold
+{
+	int64_t  timestamp;
+	double   threshold[10];
+	string	deviceId[10];
+}
