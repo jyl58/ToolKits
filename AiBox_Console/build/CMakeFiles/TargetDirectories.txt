@@ -1,4 +1,0 @@
-/mnt/d/UbuntuHome/AiBox_Console/build/CMakeFiles/edit_cache.dir
-/mnt/d/UbuntuHome/AiBox_Console/build/CMakeFiles/AiBoxConsole.dir
-/mnt/d/UbuntuHome/AiBox_Console/build/CMakeFiles/rebuild_cache.dir
-/mnt/d/UbuntuHome/AiBox_Console/build/CMakeFiles/test_console.dir
