@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC   -shared -Wl,-soname,libAiBoxConsole.so -o libAiBoxConsole.so CMakeFiles/AiBoxConsole.dir/src/AiBox_Console.cpp.o 

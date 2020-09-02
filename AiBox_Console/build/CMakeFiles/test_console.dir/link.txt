@@ -1,0 +1,1 @@
+/usr/bin/c++     CMakeFiles/test_console.dir/test/main.cpp.o  -o test_console  -L/mnt/d/UbuntuHome/AiBox_Console/build -Wl,-rpath,/mnt/d/UbuntuHome/AiBox_Console/build libAiBoxConsole.so -lpthread 
