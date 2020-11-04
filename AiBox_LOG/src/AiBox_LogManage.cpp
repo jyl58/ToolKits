@@ -1,10 +1,10 @@
 #include "AiBox_LogManage.h"
 using namespace AiBox;
 std::shared_ptr<std::ofstream> AiBoxLog::_log_file_ptr=nullptr;
-AiBoxLog::log_color_t AiBoxLog::_err_color("\033[1;31m");
-AiBoxLog::log_color_t AiBoxLog::_war_color("\033[33m");
-AiBoxLog::log_color_t AiBoxLog::_debug_color("\033[36m");
-AiBoxLog::log_color_t AiBoxLog::_info_color("\033[0m");
+const AiBoxLog::log_color_t AiBoxLog::_err_color("\033[1;31m");
+const AiBoxLog::log_color_t AiBoxLog::_war_color("\033[33m");
+const AiBoxLog::log_color_t AiBoxLog::_debug_color("\033[36m");
+const AiBoxLog::log_color_t AiBoxLog::_info_color("\033[0m");
 std::shared_ptr<LogManage> LogManage::_singleton=nullptr;
 std::shared_ptr<LogManage> LogManage::getInstance()
 {

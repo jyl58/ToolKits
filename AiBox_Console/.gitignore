@@ -1,0 +1,8 @@
+*.o
+*.pyc
+
+# vscode setting
+.vscode
+
+# Example project files
+build/

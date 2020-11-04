@@ -6,6 +6,7 @@
 *****************************************/
 #include <iostream>
 #include <time.h> 
+#include <fstream>
 #include <sys/time.h>
 #include <time.h> 
 #include <unistd.h>
@@ -16,10 +17,15 @@
 #include <netinet/in.h>
 #include "LCMParser.h"
 #include "cJSON.h"
+#include <algorithm>
+#include <chrono>
 using namespace AiBox;
 #ifndef BUILD_VERSION
 #define BUILD_VERSION 
 #endif 
+#define CURRENT_TIME std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+#define CURRENT_TIME_MS std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+#define DEBUGE_WAKEUP 1
 std::string LCMParser::_udp_multicast_group{"udpm://224.0.0.88:8876?ttl=1"};
 std::shared_ptr<lcm::LCM> LCMParser::_lcm_ptr;
 std::shared_ptr<LCMParser> LCMParser::_singleton_instance;
@@ -41,7 +47,7 @@ LCMParser::~LCMParser()
 	resetLCMParser();
 }
 bool 
-LCMParser::initLCMParser(const std::string& device_id)
+LCMParser::initLCMParser(const std::string& device_id,int deviceMode,int wakeup_time_ms)
 {
 	if(device_id.empty()){
 		std::cout<<"LCM Parser need a unique device id!!"<<std::endl;
@@ -57,6 +63,7 @@ LCMParser::initLCMParser(const std::string& device_id)
 	std::cout<<"*************CooperSystem Info*************"<<std::endl;
     std::cout<<"version: "<<COOPERSYSTEM_MAJOR<<"."<<COOPERSYSTEM_MINOR<<"."<<COOPERSYSTEM_REVISION<<std::endl;
 	std::cout<<"build time: "<<BUILD_VERSION<<std::endl;
+	std::cout<<"address:"<<_udp_multicast_group<<std::endl;
 	std::cout<<"*******************************************"<<std::endl;
 #endif	
 	if(_lcm_ptr.get()==nullptr){
@@ -94,9 +101,13 @@ LCMParser::initLCMParser(const std::string& device_id)
 		return false;
 	}
 	_lcmParser_init_finished=true;
+	_device_info.wakeupTime=wakeup_time_ms;
+	_device_info.uniqueId=0;
+	_device_info.deviceID=_device_id;
+	_device_info.deviceMode=deviceMode;
 	return true;
 }
-bool 
+void 
 LCMParser::resetLCMParser()
 {
 	if(_udp_thread_ptr.get()!=nullptr){
@@ -116,7 +127,14 @@ void
 LCMParser::LCMHandle()
 {
 	std::cout<<"Run LCM thread."<<std::endl;
+	int pub_count=0;
 	while(!_thread_should_exit){
+		pub_count++;
+		if(pub_count>=100){
+			//pub device info
+			pub_count=0;
+			uDPPubDeviceInfo();
+		}
 		if(handleTimeout(100)<0){
 			std::cout<<"LCM handle err."<<std::endl;
 		}
@@ -128,6 +146,8 @@ LCMParser::shouldACKWakeup(double threshold,wakeup_policy_t wakeup_policy,int me
 {
 	clearParserBuffer();
 	int send_time=pub_times<1? 1: pub_times;
+	int waiting_time=timeout_ms+(_device_info.wakeupTime >=  _device_max_wakeup_time_ms? 0 :_device_max_wakeup_time_ms-_device_info.wakeupTime);
+	std::cout<<"All waiting time"<<waiting_time<<std::endl;
 	_wakeup_policy=wakeup_policy;
 	//step1: do cooper
 	uint8_t send_count=0;
@@ -145,17 +165,50 @@ LCMParser::shouldACKWakeup(double threshold,wakeup_policy_t wakeup_policy,int me
 			mQTTPublishWakeupThreshold(threshold);
 		}
 		//step3: waiting some ms to receive message
-		//while(handleTimeout(timeout_ms/send_time-rand_sleep_time)>0);
-		usleep((timeout_ms/send_time-rand_sleep_time)*1000);
+		usleep((waiting_time/send_time-rand_sleep_time)*1000);
 		send_count++;
 	}
+#ifdef DEBUGE_WAKEUP
+    //record the wakeup msg
+	std::ofstream wakeup_log_out("/userdata/wake_snr.txt",std::ios::app);
+	wakeup_log_out<<CURRENT_TIME<<":M Y ID:="<<_device_id <<";SNR="<<threshold<<std::endl;
+	std::vector<wakeup_threshold_t>::iterator maxelement;
+	if(!_wakeup_threshold_vector.empty()){
+		for(auto& device:_wakeup_threshold_vector){
+			wakeup_log_out<<"           "<<"RCV ID:="<<device._deviceid<<";SNR="<<device._threshold<<std::endl;
+		}
+		maxelement=std::max_element(_wakeup_threshold_vector.begin(),_wakeup_threshold_vector.end(),[](const wakeup_threshold_t& first,const wakeup_threshold_t& last){
+				return first._threshold<last._threshold;
+			});
+		if(threshold<(*maxelement)._threshold){
+			wakeup_log_out<<"           "<<"MAX ID:="<<(*maxelement)._deviceid<<std::endl;
+		}else{
+			wakeup_log_out<<"           "<<"MAX ID:="<<_device_id<<std::endl;
+		}
+	}else{
+		wakeup_log_out<<"           "<<"MAX ID:="<<_device_id<<std::endl;
+	}
+	
+#endif
 	//step2: check wether has other device already wake up
 	if(hsOtherDeviceWakeUped()){
+#ifdef DEBUGE_WAKEUP		
+		for(auto &other_wakeuped: _wakeup_status_vector){
+			if(other_wakeuped._status==1){
+				wakeup_log_out<<"           "<<"ACK ID:="<<other_wakeuped._deviceid<<std::endl;
+			}
+		}
+		wakeup_log_out.close();
+#endif
 		return false;
 	}
 	//step3: check wether this device need anwser? 
 	bool ret=wakeupACKDecide(threshold);
 	if(ret){
+#ifdef DEBUGE_WAKEUP
+		wakeup_log_out<<"           "<<"ACK ID:="<<_device_id<<std::endl;
+		wakeup_log_out.close();
+#endif
 		int send_status_count=0;
 		while(send_status_count<2){
 			int sleep_time=std::rand()%5+5;//(5,10) rand sleep ms
@@ -170,6 +223,11 @@ LCMParser::shouldACKWakeup(double threshold,wakeup_policy_t wakeup_policy,int me
 			}
 			send_status_count++;
 		}
+	}else{
+#ifdef DEBUGE_WAKEUP
+		wakeup_log_out<<"           "<<"ACK ID:="<<(*maxelement)._deviceid<<std::endl;
+		wakeup_log_out.close();
+#endif
 	}
 	return ret;
 }
@@ -227,12 +285,11 @@ LCMParser::clearParserBuffer()
 void 
 LCMParser::handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const wakeupThreshold::wakeup_threshold* msg)
 {
-	struct timeval tvdd;
-    gettimeofday(&tvdd,NULL);
-	double s_from_unix_epoch=tvdd.tv_sec+tvdd.tv_usec*0.000001;  //us-->s
+	//std::cout<<"ddddddddddddddddd:"<<std::string((char*)rbuf->data,rbuf->data_size)<<":"<<std::endl;
+	int64_t ms_from_unix_epoch=CURRENT_TIME_MS;
 	bool already_record_deviceid;
 	//check the udp data timeliness
-	if(s_from_unix_epoch-0.000001*rbuf->recv_utime<MASSAGE_INVLID_TIME){// <1.5s
+	if(ms_from_unix_epoch-0.001*rbuf->recv_utime<MASSAGE_INVLID_TIME){
 		int64_t    tmp_timestamp=msg->timestamp;
 		for(int i=0; i<10; i++){
 			already_record_deviceid=false;
@@ -248,7 +305,7 @@ LCMParser::handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::s
 					}
 					if(!already_record_deviceid){
 						wakeup_threshold_t temp_threshold;
-						temp_threshold.timestamp=(int64_t)s_from_unix_epoch*1000;//ms
+						temp_threshold.timestamp=(int64_t)ms_from_unix_epoch;//ms
 						temp_threshold._threshold=msg->threshold[i];
 						temp_threshold._deviceid=msg->deviceId[i];	
 						_wakeup_threshold_vector.push_back(temp_threshold);
@@ -261,7 +318,7 @@ LCMParser::handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::s
 		}
 	}else{
 #ifdef DEBUG
-		std::cout<<"Delete old wakeup threshold ,time difference: "<<(s_from_unix_epoch-0.000001*rbuf->recv_utime)*1000<<" ms"<<std::endl;
+		std::cout<<"Delete old wakeup threshold ,time difference: "<<(ms_from_unix_epoch-0.001*rbuf->recv_utime)<<" ms"<<std::endl;
 		std::cout<<"Receive Msg: device id="<<msg->deviceId[0]<<";threshold="<<msg->threshold[0]<<std::endl;
 #endif
 	}
@@ -269,14 +326,12 @@ LCMParser::handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::s
 void 
 LCMParser::handleWakeUpStatusMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const wakeupStatus::wakeup_status* msg)
 {
-	struct timeval tvdd;
-    gettimeofday(&tvdd,NULL);
-	double s_from_unix_epoch=tvdd.tv_sec+tvdd.tv_usec*0.000001;  //us-->s
+	double ms_from_unix_epoch=CURRENT_TIME_MS;
 	//check the udp data timeliness
-	if(s_from_unix_epoch-0.000001*rbuf->recv_utime<MASSAGE_INVLID_TIME){// <1.5s
+	if(ms_from_unix_epoch-0.001*rbuf->recv_utime<MASSAGE_INVLID_TIME){// <1.5s
 		if((!msg->deviceId.empty())&&(_device_id.compare(msg->deviceId)!=0)){
 			wakeup_status_t temp_status;
-			temp_status.timestamp=(int64_t)s_from_unix_epoch*1000;//ms
+			temp_status.timestamp=(int64_t)ms_from_unix_epoch;//ms
 			temp_status._deviceid=msg->deviceId;
 			temp_status._status=msg->status;
 			{
@@ -289,7 +344,7 @@ LCMParser::handleWakeUpStatusMsg(const lcm::ReceiveBuffer* rbuf, const std::stri
 		}
 	}else{
 #ifdef DEBUG
-		std::cout<<"Delete old wakeup status ,time difference: "<<(s_from_unix_epoch-0.000001*rbuf->recv_utime)*1000<<" ms"<<std::endl;
+		std::cout<<"Delete old wakeup status ,time difference: "<<(ms_from_unix_epoch-0.001*rbuf->recv_utime)<<" ms"<<std::endl;
 		std::cout<<"Receive  Msg: device id="<<msg->deviceId<<";status="<<(int)msg->status<<std::endl;
 #endif
 	}
@@ -318,15 +373,43 @@ LCMParser::handleServerIPMsg(const lcm::ReceiveBuffer* rbuf, const std::string& 
 void
 LCMParser::handleDeviceInfo(const lcm::ReceiveBuffer* rbuf, const std::string& chan,const DeviceInfo::DeviceInfo* msg)
 {
-	std::cout<<"Device Type: "<<msg->deviceMode<<"; ID: "<<msg->uniqueId<<std::endl;
+	//update
+	auto elem=std::find_if(_devices_infor_vector.begin(), _devices_infor_vector.end(), [msg](const device_info_t& item){
+			return msg->deviceID.compare(item.device.deviceID)==0;
+		});
+	if(elem==_devices_infor_vector.end()){
+		device_info_t device_info;
+		device_info.timestamp=CURRENT_TIME;
+		device_info.device.wakeupTime=msg->wakeupTime;
+		device_info.device.uniqueId=msg->uniqueId;
+		device_info.device.deviceMode=msg->deviceMode;
+		device_info.device.deviceID=msg->deviceID;
+		_devices_infor_vector.push_back(device_info);
+	}else{
+		elem->device.wakeupTime=msg->wakeupTime;
+		elem->device.uniqueId=msg->uniqueId;
+		elem->timestamp=CURRENT_TIME;
+	}
+
+	//delete old message
+	std::remove_if(_devices_infor_vector.begin(), _devices_infor_vector.end(), [](const device_info_t& item){
+			return CURRENT_TIME-item.timestamp<10;  //delete the >20s
+		});
+
+	//find the max wakeup time
+	int wakeup_time_ms=std::max_element(_devices_infor_vector.begin(), _devices_infor_vector.end(), [](const device_info_t& first,const device_info_t& last){
+			return first.device.wakeupTime<last.device.wakeupTime;
+		})->device.wakeupTime;
+	if(_device_max_wakeup_time_ms!=wakeup_time_ms){
+		_device_max_wakeup_time_ms=wakeup_time_ms;
+		std::cout<<"Max wakeup time change to : "<<_device_max_wakeup_time_ms<<std::endl;
+	}
 }
 void 
 LCMParser::uDPPublishWakeupStatus()
 {
 	wakeupStatus::wakeup_status _wakeup_status;
-	struct timeval tvdd;
-    gettimeofday(&tvdd,NULL);
-	_wakeup_status.timestamp=(long long int)tvdd.tv_sec*(long long int)1000+(long long int)(0.001*(long long int)tvdd.tv_usec); //ms
+	_wakeup_status.timestamp=CURRENT_TIME_MS;
 	_wakeup_status.status=1;
 	_wakeup_status.deviceId=_device_id;
 	_lcm_ptr->publish("WAKEUP_ST", &_wakeup_status);
@@ -338,9 +421,7 @@ void
 LCMParser::uDPPublishWakeupThreshold(double threshold)
 {
 	wakeupThreshold::wakeup_threshold _wakeup_threshold;
-	struct timeval tvdd;
-    gettimeofday(&tvdd,NULL);
-	_wakeup_threshold.timestamp=(long long int)tvdd.tv_sec*(long long int)1000+(long long int)(0.001*(long long int)tvdd.tv_usec);//ms
+	_wakeup_threshold.timestamp=CURRENT_TIME_MS;
 	_wakeup_threshold.threshold[0]=threshold;
 	_wakeup_threshold.deviceId[0]=_device_id;
 	std::string debug_msg=std::string();
@@ -362,6 +443,11 @@ LCMParser::uDPPublishWakeupThreshold(double threshold)
 #ifdef DEBUG
 	std::cout<<"send node count:"<<_wakeup_threshold_vector.size()+1<<";device="<<_device_id<<";threshold="<<threshold<<debug_msg<<std::endl;
 #endif
+}
+void 
+LCMParser::uDPPubDeviceInfo()
+{
+	_lcm_ptr->publish("DEVICE_INFO", &_device_info);
 }
 /*mqtt*/
 void 
@@ -408,9 +494,7 @@ LCMParser::messageCallback(struct mosquitto* mosq, void* obj, const struct mosqu
         cJSON_Delete(payload_json);
         return;
     }
-    struct timeval tv;
-    gettimeofday(&tv,NULL);
-    int64_t  now=(int64_t)tv.tv_sec*(int64_t)1000+(int64_t)(0.001*(int64_t)tv.tv_usec); //ms
+    int64_t  now=CURRENT_TIME_MS; //ms
     if(_singleton_instance->_topic_wakeup_threshold.compare(msg->topic)==0){
         cJSON* wakeup_th_json=cJSON_GetObjectItem(payload_json,"threshold");
         if(wakeup_th_json==NULL){

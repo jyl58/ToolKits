@@ -19,9 +19,9 @@
 #include "mosquitto.h"
 #include "mqtt_protocol.h"
 #define COOPERSYSTEM_MAJOR 1
-#define COOPERSYSTEM_MINOR 0
+#define COOPERSYSTEM_MINOR 1
 #define COOPERSYSTEM_REVISION 0
-#define MASSAGE_INVLID_TIME 1.5
+#define MASSAGE_INVLID_TIME 500  //ms
 #define MAX_DEVICE 10
 namespace AiBox{
 	class LCMParser{
@@ -30,9 +30,9 @@ namespace AiBox{
 			LCMParser& operator=(const LCMParser&)=delete;
 			~LCMParser();
 			static std::shared_ptr<LCMParser> getLCMInstance();
-			/*init the cooper system*/
-			bool initLCMParser(const std::string& device_id);
-			bool resetLCMParser();
+			/*init the cooper systevoidm*/
+			bool initLCMParser(const std::string& device_id,int deviceMode,int wakeup_time_ms=500);
+			void resetLCMParser();
 			/*answer policy*/
 			typedef enum WakeUpPolicy{
 				WAKEUP_POLICY_NONE=100,
@@ -63,6 +63,10 @@ namespace AiBox{
 				std::string _deviceid;
 				std::string _ip;
 			}mqtt_server_t;
+			typedef struct Device{
+				int64_t timestamp;
+				DeviceInfo::DeviceInfo device;
+			}device_info_t;
 			/*lcm callback function*/
 			void handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const wakeupThreshold::wakeup_threshold* msg);
 			void handleWakeUpStatusMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const wakeupStatus::wakeup_status* msg);
@@ -73,16 +77,21 @@ namespace AiBox{
 			void clearParserBuffer();
 			void uDPPublishWakeupStatus();
 			void uDPPublishWakeupThreshold(double threshold);
+			void uDPPubDeviceInfo();
 			int  handleTimeout(int ms);
 			void LCMHandle();
+			//device info
+			std::string _device_id;
+			DeviceInfo::DeviceInfo _device_info;
+			int _device_max_wakeup_time_ms=0;
 			static std::shared_ptr<LCMParser> _singleton_instance;
 			std::vector<wakeup_threshold_t> _wakeup_threshold_vector;
 			std::vector<wakeup_status_t>_wakeup_status_vector;
+			std::vector<device_info_t> _devices_infor_vector;
 			static std::shared_ptr<lcm::LCM> _lcm_ptr;
 			static std::string _udp_multicast_group;
 			bool _lcmParser_init_finished{false};
 			enum WakeUpPolicy _wakeup_policy{WAKEUP_POLICY_NONE};
-			std::string _device_id;
 			/*thread*/
 			std::shared_ptr<std::thread> _udp_thread_ptr;
 			bool _thread_should_exit;

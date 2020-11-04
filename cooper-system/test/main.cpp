@@ -5,12 +5,10 @@
 #include "LCMParser.h"
 int main(int argc,char*argv[])
 {
-	AiBox::LCMParser::getLCMInstance()->initLCMParser("test_1234_test");
+	AiBox::LCMParser::getLCMInstance()->initLCMParser("test_1234_1334",500);
 	while(1)
 	{
-		struct timeval tvdd;
-		gettimeofday(&tvdd,NULL);
-		AiBox::LCMParser::getLCMInstance()->shouldACKWakeup(tvdd.tv_sec+tvdd.tv_usec*0.000001,AiBox::LCMParser::WAKEUP_POLICY_TIME);
+		AiBox::LCMParser::getLCMInstance()->shouldACKWakeup(111,AiBox::LCMParser::WAKEUP_POLICY_NEAR);
 		sleep(5);
 	}
 }

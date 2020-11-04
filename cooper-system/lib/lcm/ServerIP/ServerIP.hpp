@@ -19,6 +19,10 @@ class ServerIP
     public:
         std::string deviceid;
 
+        int64_t    uniqueId;
+
+        int32_t    deviceMode;
+
         std::string ip;
 
     public:
@@ -122,6 +126,12 @@ int ServerIP::_encodeNoHash(void *buf, int offset, int maxlen) const
         buf, offset + pos, maxlen - pos, &deviceid_cstr, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
+    tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->uniqueId, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->deviceMode, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
     char* ip_cstr = const_cast<char*>(this->ip.c_str());
     tlen = __string_encode_array(
         buf, offset + pos, maxlen - pos, &ip_cstr, 1);
@@ -143,6 +153,12 @@ int ServerIP::_decodeNoHash(const void *buf, int offset, int maxlen)
         static_cast<const char*>(buf) + offset + pos, __deviceid_len__ - 1);
     pos += __deviceid_len__;
 
+    tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->uniqueId, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->deviceMode, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
     int32_t __ip_len__;
     tlen = __int32_t_decode_array(
         buf, offset + pos, maxlen - pos, &__ip_len__, 1);
@@ -159,13 +175,15 @@ int ServerIP::_getEncodedSizeNoHash() const
 {
     int enc_size = 0;
     enc_size += this->deviceid.size() + 4 + 1;
+    enc_size += __int64_t_encoded_array_size(NULL, 1);
+    enc_size += __int32_t_encoded_array_size(NULL, 1);
     enc_size += this->ip.size() + 4 + 1;
     return enc_size;
 }
 
 uint64_t ServerIP::_computeHash(const __lcm_hash_ptr *)
 {
-    uint64_t hash = 0xead408a4c4adbe9aLL;
+    uint64_t hash = 0xfa0b8189cd013c1aLL;
     return (hash<<1) + ((hash>>63)&1);
 }
 

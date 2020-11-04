@@ -9,6 +9,7 @@
 
 #include "lcm_coretypes.h"
 
+#include <string>
 
 namespace DeviceInfo
 {
@@ -16,9 +17,13 @@ namespace DeviceInfo
 class DeviceInfo
 {
     public:
+        std::string deviceID;
+
         int64_t    uniqueId;
 
         int32_t    deviceMode;
+
+        int32_t    wakeupTime;
 
     public:
         /**
@@ -116,10 +121,18 @@ int DeviceInfo::_encodeNoHash(void *buf, int offset, int maxlen) const
 {
     int pos = 0, tlen;
 
+    char* deviceID_cstr = const_cast<char*>(this->deviceID.c_str());
+    tlen = __string_encode_array(
+        buf, offset + pos, maxlen - pos, &deviceID_cstr, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
     tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->uniqueId, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->deviceMode, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->wakeupTime, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     return pos;
@@ -129,10 +142,22 @@ int DeviceInfo::_decodeNoHash(const void *buf, int offset, int maxlen)
 {
     int pos = 0, tlen;
 
+    int32_t __deviceID_len__;
+    tlen = __int32_t_decode_array(
+        buf, offset + pos, maxlen - pos, &__deviceID_len__, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+    if(__deviceID_len__ > maxlen - pos) return -1;
+    this->deviceID.assign(
+        static_cast<const char*>(buf) + offset + pos, __deviceID_len__ - 1);
+    pos += __deviceID_len__;
+
     tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->uniqueId, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->deviceMode, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->wakeupTime, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     return pos;
@@ -141,14 +166,16 @@ int DeviceInfo::_decodeNoHash(const void *buf, int offset, int maxlen)
 int DeviceInfo::_getEncodedSizeNoHash() const
 {
     int enc_size = 0;
+    enc_size += this->deviceID.size() + 4 + 1;
     enc_size += __int64_t_encoded_array_size(NULL, 1);
+    enc_size += __int32_t_encoded_array_size(NULL, 1);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
     return enc_size;
 }
 
 uint64_t DeviceInfo::_computeHash(const __lcm_hash_ptr *)
 {
-    uint64_t hash = 0x06601f2aa1fabdffLL;
+    uint64_t hash = 0x2f96a2d9e36e4ac8LL;
     return (hash<<1) + ((hash>>63)&1);
 }
 

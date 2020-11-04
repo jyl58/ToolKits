@@ -15,10 +15,10 @@ typedef struct LogColor{
     LogColor(const std::string& color):_color(color){}
 }log_color_t;
 
-extern log_color_t _err_color;
-extern log_color_t _war_color;
-extern log_color_t _debug_color;
-extern log_color_t _info_color;
+extern const log_color_t _err_color;
+extern const log_color_t _war_color;
+extern const log_color_t _debug_color;
+extern const log_color_t _info_color;
 extern std::shared_ptr<std::ofstream> _log_file_ptr;
 
 inline void AiBoxPrint(){
