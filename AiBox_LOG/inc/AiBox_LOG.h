@@ -41,6 +41,7 @@ void AiBoxPrint(const log_color_t& color, T... Args){
 #include <chrono>
 #define FILE_NAME(file_path) std::string(file_path).substr(std::string(file_path).find_last_of("/")+1)
 #define CURRENT_TIME std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+#define CURRENT_TIME_S std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count()
 
 #define AIBOX_LOGD(...)    AiBoxLog::AiBoxPrint(AiBoxLog::_debug_color,"[",CURRENT_TIME,"]",FILE_NAME(__FILE__),"<",__LINE__,"> ",__VA_ARGS__)
 #define AIBOX_LOGI(...)    AiBoxLog::AiBoxPrint(AiBoxLog::_info_color,"[",CURRENT_TIME,"]",FILE_NAME(__FILE__),"<",__LINE__,"> ",__VA_ARGS__)
