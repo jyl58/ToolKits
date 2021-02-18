@@ -16,8 +16,8 @@
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include "LCMParser.h"
-#include "cJSON.h"
 #include <algorithm>
+#include "UDPBroadcast.h"
 #include <chrono>
 using namespace AiBox;
 #ifndef BUILD_VERSION
@@ -25,7 +25,7 @@ using namespace AiBox;
 #endif 
 #define CURRENT_TIME std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count()
 #define CURRENT_TIME_MS std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
-#define DEBUGE_WAKEUP 1
+//#define DEBUGE_WAKEUP 1
 std::string LCMParser::_udp_multicast_group{"udpm://224.0.0.88:8876?ttl=1"};
 std::shared_ptr<lcm::LCM> LCMParser::_lcm_ptr;
 std::shared_ptr<LCMParser> LCMParser::_singleton_instance;
@@ -91,7 +91,10 @@ LCMParser::initLCMParser(const std::string& device_id,int deviceMode,int wakeup_
 	_lcm_ptr->subscribe("DEVICE_INFO",&LCMParser::handleDeviceInfo,_singleton_instance.get());
 	//init the random 
     std::srand((unsigned)time(NULL));
-
+	
+	if(!UDPBroadcast::getInstance()->init()){
+		std::cout<<"UDP broadcast init err!!!"<<std::endl;
+	}
 	_thread_should_exit=false;
 	_udp_thread_ptr=std::make_shared<std::thread>(&LCMParser::LCMHandle,this);
 	if(_udp_thread_ptr.get()==nullptr){
@@ -130,14 +133,17 @@ LCMParser::LCMHandle()
 	int pub_count=0;
 	while(!_thread_should_exit){
 		pub_count++;
-		if(pub_count>=100){
+		if(pub_count>=50){
 			//pub device info
 			pub_count=0;
 			uDPPubDeviceInfo();
+			uDPBroadCast();
 		}
 		if(handleTimeout(100)<0){
 			std::cout<<"LCM handle err."<<std::endl;
 		}
+		//handle udpbrocast
+		handleUDPBroadCastPayload();
 	}
 	std::cout<<"Exit LCM handle thread."<<std::endl;
 }
@@ -283,15 +289,14 @@ LCMParser::clearParserBuffer()
 	_wakeup_status_vector.clear();
 }
 void 
-LCMParser::handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const wakeupThreshold::wakeup_threshold* msg)
+LCMParser::handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const WakeupThreshold::WakeupThreshold* msg)
 {
-	//std::cout<<"ddddddddddddddddd:"<<std::string((char*)rbuf->data,rbuf->data_size)<<":"<<std::endl;
 	int64_t ms_from_unix_epoch=CURRENT_TIME_MS;
 	bool already_record_deviceid;
 	//check the udp data timeliness
 	if(ms_from_unix_epoch-0.001*rbuf->recv_utime<MASSAGE_INVLID_TIME){
 		int64_t    tmp_timestamp=msg->timestamp;
-		for(int i=0; i<10; i++){
+		for(int i=0; i<(sizeof(msg->threshold)/sizeof(msg->threshold[0])); i++){
 			already_record_deviceid=false;
 			//exclude this dev message
 			if((!msg->deviceId[i].empty())&&(_device_id.compare(msg->deviceId[i])!=0)){
@@ -306,7 +311,7 @@ LCMParser::handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::s
 					if(!already_record_deviceid){
 						wakeup_threshold_t temp_threshold;
 						temp_threshold.timestamp=(int64_t)ms_from_unix_epoch;//ms
-						temp_threshold._threshold=msg->threshold[i];
+						temp_threshold._threshold=(double)(msg->threshold[i]*1E-6);
 						temp_threshold._deviceid=msg->deviceId[i];	
 						_wakeup_threshold_vector.push_back(temp_threshold);
 	#ifdef DEBUG		
@@ -358,11 +363,16 @@ LCMParser::handleServerIPMsg(const lcm::ReceiveBuffer* rbuf, const std::string& 
 #ifdef DEBUG
 	std::cout<<"Receive New Mqtt Server deviceid="<<msg->deviceid<<"; ip="<<msg->ip<<std::endl;
 #endif
+	_mqtt_server._ip=msg->ip;
+	_mqtt_server._deviceid=msg->deviceid;
+	startMqtt();
+}
+void 
+LCMParser::startMqtt()
+{
 	if(_mosq!=NULL){
 		mqttDisconnect();
 	}
-	_mqtt_server._ip=msg->ip;
-	_mqtt_server._deviceid=msg->deviceid;
 	if(!initMqtt()){
 		std::cout<<"Init mqtt err."<<std::endl;
 		//need reconnect
@@ -372,6 +382,11 @@ LCMParser::handleServerIPMsg(const lcm::ReceiveBuffer* rbuf, const std::string& 
 }
 void
 LCMParser::handleDeviceInfo(const lcm::ReceiveBuffer* rbuf, const std::string& chan,const DeviceInfo::DeviceInfo* msg)
+{
+	updateDeviceInfo(msg);
+}
+void 
+LCMParser::updateDeviceInfo(const DeviceInfo::DeviceInfo* msg)
 {
 	//update
 	auto elem=std::find_if(_devices_infor_vector.begin(), _devices_infor_vector.end(), [msg](const device_info_t& item){
@@ -392,10 +407,11 @@ LCMParser::handleDeviceInfo(const lcm::ReceiveBuffer* rbuf, const std::string& c
 	}
 
 	//delete old message
-	std::remove_if(_devices_infor_vector.begin(), _devices_infor_vector.end(), [](const device_info_t& item){
+	_devices_infor_vector.erase(std::remove_if(_devices_infor_vector.begin(), _devices_infor_vector.end(), [](const device_info_t& item){
 			return CURRENT_TIME-item.timestamp<10;  //delete the >20s
-		});
-
+		})
+		,_devices_infor_vector.end()
+		);
 	//find the max wakeup time
 	int wakeup_time_ms=std::max_element(_devices_infor_vector.begin(), _devices_infor_vector.end(), [](const device_info_t& first,const device_info_t& last){
 			return first.device.wakeupTime<last.device.wakeupTime;
@@ -420,16 +436,16 @@ LCMParser::uDPPublishWakeupStatus()
 void 
 LCMParser::uDPPublishWakeupThreshold(double threshold)
 {
-	wakeupThreshold::wakeup_threshold _wakeup_threshold;
+	WakeupThreshold::WakeupThreshold _wakeup_threshold;
 	_wakeup_threshold.timestamp=CURRENT_TIME_MS;
-	_wakeup_threshold.threshold[0]=threshold;
+	_wakeup_threshold.threshold[0]=(int)(threshold*1E6);
 	_wakeup_threshold.deviceId[0]=_device_id;
 	std::string debug_msg=std::string();
 	for(int i=0;i<MAX_DEVICE;i++){
 		if(_wakeup_threshold_vector.size()>i){
 			auto &threshold=_wakeup_threshold_vector[i];
 			if(!threshold._deviceid.empty()){
-				_wakeup_threshold.threshold[i+1]=threshold._threshold;
+				_wakeup_threshold.threshold[i+1]=(int)(threshold._threshold*1E6);
 				_wakeup_threshold.deviceId[i+1]=threshold._deviceid;
 #ifdef DEBUG
 				debug_msg+="device="+threshold._deviceid+";threshold="+std::to_string(threshold._threshold);
@@ -448,6 +464,7 @@ void
 LCMParser::uDPPubDeviceInfo()
 {
 	_lcm_ptr->publish("DEVICE_INFO", &_device_info);
+	
 }
 /*mqtt*/
 void 
@@ -510,8 +527,8 @@ LCMParser::messageCallback(struct mosquitto* mosq, void* obj, const struct mosqu
                     return;
                 }
             }
-            std::cout<<"MQTT time: "<<now<<",device="<<device_id<<",threshold="<<wakeup_th_json->valuedouble<<std::endl;
-            wakeup_threshold_t temp_th{now,device_id,wakeup_th_json->valuedouble};
+            std::cout<<"MQTT time: "<<now<<",device="<<device_id<<",threshold="<<(double)(wakeup_th_json->valueint*1E-6)<<std::endl;
+            wakeup_threshold_t temp_th{now,device_id,(double)(wakeup_th_json->valueint*1E-6)};
             _singleton_instance->_wakeup_threshold_vector.push_back(temp_th);
         }
     }else if(_singleton_instance->_topic_wakeup_status.compare(msg->topic)==0){
@@ -594,7 +611,7 @@ LCMParser::initMqtt()
 		return false;
 	}
     //connect 
-    int rc = mosquitto_connect_bind(_mosq, _mqtt_server._ip.c_str(), 36699, 30,_local_ip.c_str());
+    int rc = mosquitto_connect_bind(_mosq, _mqtt_server._ip.c_str(), 56899, 30,_local_ip.c_str());
     if(rc!=MOSQ_ERR_SUCCESS){
         std::cout<<"Mqtt connect bind err,code: "<<rc<<std::endl;
         mosquitto_lib_cleanup();
@@ -625,7 +642,7 @@ LCMParser::mQTTpublishWakeupStatus()
 void 
 LCMParser::mQTTPublishWakeupThreshold(double threshold)
 {
-    std::string wakeup_th_json="{\"deviceid\":\""+ _device_id+"\",\"threshold\":"+std::to_string(threshold) +"}";
+    std::string wakeup_th_json="{\"deviceid\":\""+ _device_id+"\",\"threshold\":"+std::to_string((int)(threshold*1E6)) +"}";
     if(_mqtt_is_connected&&_mosq!=NULL){
         int ret=mosquitto_publish(_mosq,NULL,_topic_wakeup_threshold.c_str(),wakeup_th_json.size()+1,(void*)wakeup_th_json.c_str(),2,false);
         if(ret!=MOSQ_ERR_SUCCESS){
@@ -665,4 +682,75 @@ LCMParser::getLocalIP()
     }
 	freeifaddrs(ifAddrStruct);
     return false;
+}
+
+//UDP broacast
+void 
+LCMParser::uDPBroadCast()
+{
+	std::string device_mode=std::to_string(_device_info.deviceMode);
+	std::string uniqueid=std::to_string(_device_info.uniqueId);
+	std::string wakeupTime=std::to_string(_device_info.wakeupTime);
+	std::string payload="{\"topic\": \"DEVICE_INFO\",\"deviceid\":"+ _device_info.deviceID+",\"deviceMode\":"+device_mode + ",\"uniqueId\":"+ uniqueid+",\"wakeupTime\":"+ wakeupTime+"}";
+	UDPBroadcast::getInstance()->send(payload);
+}
+void 
+LCMParser::handleUDPBroadCastPayload()
+{
+	std::string payload;
+	payload.clear();
+	if(!UDPBroadcast::getInstance()->handleRecv(payload)){
+		return;
+	}
+	cJSON* payload_json=cJSON_Parse(payload.c_str());
+	if(payload_json==NULL){
+		return;
+	}
+	cJSON* topic_json=cJSON_GetObjectItem(payload_json,"topic");
+	if(topic_json==NULL){
+		return;
+	}
+	if(std::string("DEVICE_INFO").compare(topic_json->valuestring)==0){
+		uDPBroadCastParseDeviceInfo(payload_json);
+	}else if(std::string("SERVER_IP").compare(topic_json->valuestring)==0){
+		uDPBroadCastParseServer(payload_json);
+	}
+	cJSON_Delete(payload_json);
+}
+void 
+LCMParser::uDPBroadCastParseDeviceInfo(cJSON* payload)
+{
+	DeviceInfo::DeviceInfo temp_device_info;
+	cJSON* sever_id_json=cJSON_GetObjectItem(payload,"deviceid");
+	if(sever_id_json==NULL){
+		return;
+	}
+	temp_device_info.deviceID=sever_id_json->valuestring;
+	cJSON* sever_wakeuptime_json=cJSON_GetObjectItem(payload,"wakeupTime");
+	if(sever_wakeuptime_json==NULL){
+		return;
+	}
+	temp_device_info.wakeupTime=sever_wakeuptime_json->valueint;
+	updateDeviceInfo(&temp_device_info);
+}
+void 
+LCMParser::uDPBroadCastParseServer(cJSON* payload)
+{
+	cJSON* sever_id_json=cJSON_GetObjectItem(payload,"deviceid");
+	if(sever_id_json==NULL){
+		return;
+	}
+	if(_mqtt_server._deviceid.compare(sever_id_json->valuestring)==0){
+		return;
+	}
+	cJSON* sever_ip_json=cJSON_GetObjectItem(payload,"ip");
+	if(sever_ip_json==NULL){
+		return;
+	}
+#ifdef DEBUG
+	std::cout<<"UDP BroadCast Receive New Mqtt Server deviceid="<<sever_id_json->valuestring<<"; ip="<<sever_ip_json->valuestring<<":"<<std::endl;
+#endif
+	_mqtt_server._ip=sever_ip_json->valuestring;
+	_mqtt_server._deviceid=sever_id_json->valuestring;
+	startMqtt();
 }

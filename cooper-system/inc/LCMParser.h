@@ -12,17 +12,18 @@
 #include <mutex>
 #include <stdlib.h>
 #include "lcm-cpp.hpp"
-#include "wakeupThreshold/wakeup_threshold.hpp"
+#include "wakeupThreshold/WakeupThreshold.hpp"
 #include "wakeupStatus/wakeup_status.hpp" 
 #include "ServerIP/ServerIP.hpp"
 #include "DeviceInfo/DeviceInfo.hpp"
 #include "mosquitto.h"
 #include "mqtt_protocol.h"
+#include "cJSON.h"
 #define COOPERSYSTEM_MAJOR 1
 #define COOPERSYSTEM_MINOR 1
 #define COOPERSYSTEM_REVISION 0
 #define MASSAGE_INVLID_TIME 500  //ms
-#define MAX_DEVICE 10
+#define MAX_DEVICE 50
 namespace AiBox{
 	class LCMParser{
 		public:
@@ -68,10 +69,11 @@ namespace AiBox{
 				DeviceInfo::DeviceInfo device;
 			}device_info_t;
 			/*lcm callback function*/
-			void handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const wakeupThreshold::wakeup_threshold* msg);
+			void handleWakeUpThresholdMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const WakeupThreshold::WakeupThreshold* msg);
 			void handleWakeUpStatusMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan, const wakeupStatus::wakeup_status* msg);
 			void handleServerIPMsg(const lcm::ReceiveBuffer* rbuf, const std::string& chan,const ServerIP::ServerIP* msg);
 			void handleDeviceInfo(const lcm::ReceiveBuffer* rbuf, const std::string& chan,const DeviceInfo::DeviceInfo* msg);
+			void updateDeviceInfo(const DeviceInfo::DeviceInfo* msg);
 			bool wakeupACKDecide(double threshold);
 			bool hsOtherDeviceWakeUped();
 			void clearParserBuffer();
@@ -105,6 +107,7 @@ namespace AiBox{
 			std::string _topic_wakeup_threshold;
 			std::string _topic_wakeup_status;
 			std::mutex  _mutex;
+			void startMqtt();
 			bool initMqtt();
 			void mqttDisconnect();
 			void mQTTpublishWakeupStatus();
@@ -114,5 +117,11 @@ namespace AiBox{
         	static void connectCallback(struct mosquitto* mosq, void* obj, int response);
         	static void messageCallback(struct mosquitto* mosq, void* obj, const struct mosquitto_message* msg);
         	static void disconnectCallback(struct mosquitto *mosq, void *obj, int rc);
+
+			//UDP broacast
+			void handleUDPBroadCastPayload();
+			void uDPBroadCast();
+			void uDPBroadCastParseDeviceInfo(cJSON* payload);
+			void uDPBroadCastParseServer(cJSON* payload);
 	};
 };
